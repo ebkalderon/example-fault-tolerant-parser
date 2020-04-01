@@ -1,0 +1,9 @@
+[package]
+name = "example-fault-tolerant-parser"
+version = "0.1.0"
+authors = ["Eyal Kalderon <ebkalderon@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+nom = "5.1"
+nom_locate = "2.0"

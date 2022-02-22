@@ -34,17 +34,19 @@ impl<'a> State<'a> {
     }
 }
 
-fn expect<'a, F, E, T>(parser: F, error_msg: E) -> impl Fn(LocatedSpan<'a>) -> IResult<Option<T>>
+fn expect<'a, F, E, T>(mut parser: F, error_msg: E) -> impl FnMut(LocatedSpan<'a>) -> IResult<Option<T>>
 where
-    F: Fn(LocatedSpan<'a>) -> IResult<T>,
+    F: FnMut(LocatedSpan<'a>) -> IResult<T>,
     E: ToString,
 {
     move |input| match parser(input) {
         Ok((remaining, out)) => Ok((remaining, Some(out))),
-        Err(nom::Err::Error((input, _))) | Err(nom::Err::Failure((input, _))) => {
-            let err = Error(input.to_range(), error_msg.to_string());
-            input.extra.report_error(err);
-            Ok((input, None))
+        Err(nom::Err::Error (nom::error::Error {input: i, code: _}))
+        | Err(nom::Err::Failure (nom::error::Error {input: i, code:_}))
+        => {
+            let err = Error(i.to_range(), error_msg.to_string());
+            i.extra.report_error(err);
+            Ok((i, None))
         }
         Err(err) => Err(err),
     }

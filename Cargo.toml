@@ -5,5 +5,5 @@ authors = ["Eyal Kalderon <ebkalderon@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-nom = "5.1"
-nom_locate = "2.0"
+nom = "7"
+nom_locate = "4"

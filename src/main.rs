@@ -1,29 +1,34 @@
 use std::cell::RefCell;
-use std::ops::Range;
+use std::ops::{Range};
 
 use nom::branch::alt;
 use nom::bytes::complete::{take, take_till1, take_while};
-use nom::character::complete::{anychar, char};
+use nom::character::complete::{anychar, char, multispace0};
 use nom::combinator::{all_consuming, map, not, recognize, rest, verify};
 use nom::sequence::{delimited, preceded, terminated};
 
 type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, State<'a>>;
 type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
 
-trait ToRange {
-    fn to_range(&self) -> Range<usize>;
+#[derive(Debug)]
+struct PosInfo(u32, Range<usize>);
+trait Position {
+    fn to_position(&self) -> PosInfo;
 }
 
-impl<'a> ToRange for LocatedSpan<'a> {
-    fn to_range(&self) -> Range<usize> {
+impl<'a> Position for LocatedSpan<'a> {
+    fn to_position(&self) -> PosInfo {
         let start = self.location_offset();
         let end = start + self.fragment().len();
-        start..end
+        PosInfo {
+            0: self.location_line(),
+            1: start..end,
+        }
     }
 }
 
 #[derive(Debug)]
-struct Error(Range<usize>, String);
+struct Error(PosInfo, String);
 
 #[derive(Clone, Debug)]
 struct State<'a>(&'a RefCell<Vec<Error>>);
@@ -34,17 +39,26 @@ impl<'a> State<'a> {
     }
 }
 
-fn expect<'a, F, E, T>(mut parser: F, error_msg: E) -> impl FnMut(LocatedSpan<'a>) -> IResult<Option<T>>
+fn ws<'a, F, T>(parser: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<T>
+where
+    F: FnMut(LocatedSpan<'a>) -> IResult<T>,
+{
+    delimited(multispace0, parser, multispace0)
+}
+
+fn expect<'a, F, E, T>(
+    mut parser: F,
+    error_msg: E,
+) -> impl FnMut(LocatedSpan<'a>) -> IResult<Option<T>>
 where
     F: FnMut(LocatedSpan<'a>) -> IResult<T>,
     E: ToString,
 {
     move |input| match parser(input) {
         Ok((remaining, out)) => Ok((remaining, Some(out))),
-        Err(nom::Err::Error (nom::error::Error {input: i, code: _}))
-        | Err(nom::Err::Failure (nom::error::Error {input: i, code:_}))
-        => {
-            let err = Error(i.to_range(), error_msg.to_string());
+        Err(nom::Err::Error(nom::error::Error { input: i, .. }))
+        | Err(nom::Err::Failure(nom::error::Error { input: i, .. })) => {
+            let err = Error(i.to_position(), error_msg.to_string());
             i.extra.report_error(err);
             Ok((i, None))
         }
@@ -65,17 +79,17 @@ enum Expr {
 fn ident(input: LocatedSpan) -> IResult<Expr> {
     let first = verify(anychar, |c| c.is_ascii_alphabetic() || *c == '_');
     let rest = take_while(|c: char| c.is_ascii_alphanumeric() || "_-'".contains(c));
-    let ident = recognize(preceded(first, rest));
-    map(ident, |span: LocatedSpan| {
+    let ident2 = recognize(preceded(first, rest));
+    map(ws(ident2), |span: LocatedSpan| {
         Expr::Ident(Ident(span.fragment().to_string()))
     })(input)
 }
 
 fn paren(input: LocatedSpan) -> IResult<Expr> {
     let paren = delimited(
-        char('('),
-        expect(expr, "expected expression after `(`"),
-        expect(char(')'), "missing `)`"),
+        ws(char('(')),
+        expect(ws(expr), "expected expression after `(`"),
+        expect(ws(char(')')), "missing `)`"),
     );
 
     map(paren, |inner| {
@@ -85,7 +99,10 @@ fn paren(input: LocatedSpan) -> IResult<Expr> {
 
 fn error(input: LocatedSpan) -> IResult<Expr> {
     map(take_till1(|c| c == ')'), |span: LocatedSpan| {
-        let err = Error(span.to_range(), format!("unexpected `{}`", span.fragment()));
+        let err = Error(
+            span.to_position(),
+            format!("unexpected `{}`", span.fragment()),
+        );
         span.extra.report_error(err);
         Expr::Error
     })(input)
@@ -108,7 +125,19 @@ fn parse(source: &str) -> (Expr, Vec<Error>) {
 }
 
 fn main() {
-    for input in &["foo", "(foo)", "(foo))", "(%", "(", "%", "()", ""] {
+    for input in &[
+        "foo ",
+        "(foo)",
+        "(foo))",
+        "\n\n(foo\n\n)",
+        "      (           foo      ) \n       ",
+        "(%",
+        "(%)",
+        "(",
+        "%",
+        "()",
+        "",
+    ] {
         println!("{:7} {:?}", input, parse(input));
     }
 }
